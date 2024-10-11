@@ -1,0 +1,9 @@
+<%- contentFor('body') %>
+<section id="document-content">
+    <p><%= document.content %></p>
+</section>
+<button hx-post="/products/create" 
+        hx-vals='{"documentId": "<%= document.id %>"}'
+        hx-swap="outerHTML">
+    Create Product
+</button>

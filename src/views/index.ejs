@@ -1,0 +1,190 @@
+<%- contentFor('body') %>
+<div id="tabs">
+  <button class="tab-button active" onclick="openTab(event, 'import-file')">Import File</button>
+  <button class="tab-button" onclick="openTab(event, 'direct-url')">Direct URL</button>
+</div>
+
+<div id="import-file" class="tab-content">
+  <h2>Import from Google Drive</h2>
+  <button onclick="signInToGoogleDrive()">Choose File from Google Drive</button>
+</div>
+
+<div id="direct-url" class="tab-content" style="display:none;">
+  <h2>Import from URL</h2>
+  <form id="url-form">
+    <input type="hidden" name="type" value="url">
+    <input type="text" id="url-input" name="url" placeholder="Enter Google Doc URL">
+    <button type="submit">Import</button>
+  </form>
+</div>
+
+<div id="preview"></div>
+<div id="loading" style="display: none;">Loading...</div> <!-- Loading indicator -->
+
+<script src="https://apis.google.com/js/api.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    window.openTab = function(evt, tabName) {
+        var i, tabContent, tabButtons;
+        tabContent = document.getElementsByClassName("tab-content");
+        for (i = 0; i < tabContent.length; i++) {
+            tabContent[i].style.display = "none";
+        }
+        tabButtons = document.getElementsByClassName("tab-button");
+        for (i = 0; i < tabButtons.length; i++) {
+            tabButtons[i].className = tabButtons[i].className.replace(" active", "");
+        }
+        document.getElementById(tabName).style.display = "block";
+        evt.currentTarget.className += " active";
+    };
+
+    window.signInToGoogleDrive = function() {
+        const client = google.accounts.oauth2.initTokenClient({
+            client_id: '<%= googleClientId %>',
+            scope: 'https://www.googleapis.com/auth/drive.readonly',
+            callback: (tokenResponse) => {
+                if (tokenResponse && tokenResponse.access_token) {
+                    loadPicker(tokenResponse.access_token);
+                    localStorage.setItem('accessToken', tokenResponse.access_token);
+                }
+            },
+        });
+        client.requestAccessToken();
+    };
+
+    function loadPicker(accessToken) {
+        gapi.load('picker', () => {
+            const picker = new google.picker.PickerBuilder()
+                .addView(google.picker.ViewId.DOCUMENTS)
+                .setOAuthToken(accessToken)
+                .setCallback((data) => pickerCallback(data, accessToken))
+                .build();
+            picker.setVisible(true);
+        });
+    }
+
+    function pickerCallback(data, accessToken) {
+        if (data.action === google.picker.Action.PICKED) {
+            const fileId = data.docs[0].id;
+            const formData = new FormData();
+            formData.append('type', 'doc');
+            formData.append('fileId', fileId);
+            formData.append('token', accessToken);
+            
+            // Show loading indicator
+            document.getElementById('loading').style.display = 'block';
+
+            fetch('/documents/import', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('preview').innerHTML = generatePreviewHTML(data);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to import document');
+            })
+            .finally(() => {
+                // Hide loading indicator
+                document.getElementById('loading').style.display = 'none';
+            });
+        }
+    }
+
+    document.getElementById('url-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const url = document.getElementById('url-input').value;
+        const accessToken = localStorage.getItem('accessToken');
+        document.getElementById('loading').style.display = 'block';
+        const formData = new FormData();
+        const isGoogleDoc = /https?:\/\/docs\.google\.com\/document\/d\/[a-zA-Z0-9-_]+/.test(url);
+        formData.append('token', accessToken);
+        if (isGoogleDoc) {
+            formData.append('type', 'doc');
+            const fileId = extractGoogleDocId(url); 
+            formData.append('fileId', fileId); 
+        } else {
+            formData.append('type', 'web'); 
+            formData.append('url', url); 
+        }
+        fetch('/documents/import', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('preview').innerHTML = generatePreviewHTML(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to import document');
+        })
+        .finally(() => {
+            // Hide loading indicator
+            document.getElementById('loading').style.display = 'none';
+        });
+    });
+
+    function extractGoogleDocId(url) {
+        // Regular expression to match Google Doc IDs
+        const regex = /\/d\/([a-zA-Z0-9-_]+)/;
+        const match = url.match(regex);
+        return match ? match[1] : null;
+    }
+
+    function generatePreviewHTML(data) {
+        return `
+            <h2>Preview</h2>
+            <p><strong>Title:</strong> ${data.shopifyData.title}</p>
+            <p><strong>Category:</strong> ${data.shopifyData.category}</p>
+            <p><strong>Description:</strong> ${data.shopifyData.description}</p>
+            <p><strong>Price:</strong> ${data.shopifyData.price}</p>
+            <p><strong>Cost per Item:</strong> ${data.shopifyData.costPerItem}</p>
+            <p><strong>Profit:</strong> ${data.shopifyData.profit}</p>
+            <p><strong>Weight:</strong> ${data.shopifyData.weight}</p>
+            <h3>SEO Data</h3>
+            <p><strong>Title Tag:</strong> ${data.seoData.titleTag}</p>
+            <p><strong>Description Tag:</strong> ${data.seoData.descriptionTag}</p>
+            <button class="publish-button" data-product='${JSON.stringify(data)}'>Publish to Shopify</button>
+        `;
+    }
+
+    // Event delegation to handle button clicks
+    document.addEventListener('click', function(event) {
+        if (event.target.classList.contains('publish-button')) {
+            const productData = JSON.parse(event.target.getAttribute('data-product'));
+            publishToShopify(productData);
+        }
+    });
+
+    window.publishToShopify = function(data) {
+        console.log("this is fired publishToShopify", data);
+        fetch('/products/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data), // Convert the data object to a JSON string
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(result => {
+            alert(`Product published to Shopify. ID: ${result.id}`);
+        })
+        .catch(error => {
+            console.error('Error publishing to Shopify:', error);
+            alert('Failed to publish product to Shopify');
+        });
+    };
+
+});
+</script>
+
+

@@ -1,0 +1,10 @@
+<%- contentFor('body') %>
+<section id="product-details">
+    <p><strong>Price:</strong> $<%= product.price %></p>
+    <p><strong>Description:</strong></p>
+    <p><%= product.description %></p>
+</section>
+<button hx-post="/products/<%= product.id %>/push" 
+        hx-swap="outerHTML">
+    Push to Shopify
+</button>
